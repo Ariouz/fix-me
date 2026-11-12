@@ -7,17 +7,34 @@ import fr.vicalvez.fixme.broker.model.OrderStatus;
 import fr.vicalvez.fixme.protocol.FixMessage;
 import fr.vicalvez.fixme.protocol.FixMessageType;
 import fr.vicalvez.fixme.protocol.FixTag;
+import fr.vicalvez.fixme.persistence.TransactionRecord;
+import fr.vicalvez.fixme.persistence.TransactionRepository;
+import fr.vicalvez.fixme.persistence.TransactionState;
 
+import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 
 public class BrokerService {
 
 	private BrokerConnection connection;
+	private String brokerId;
+	private final String brokerInstance = System.getProperty("fixme.broker.instance", "default-broker");
+	private final TransactionRepository transactions;
+
+	public BrokerService() {
+		this(new TransactionRepository());
+	}
+
+	BrokerService(TransactionRepository transactions) {
+		this.transactions = transactions;
+	}
 
 	public void handleMessage(FixMessage message) {
 		try {
-			OrderStatus status = getMessageOrderStatus(message.type());
-			OrderResult result = new OrderResult(message.getField(FixTag.ORDER_ID), status);
+			OrderResult result = toOrderResult(message);
+			transactions.markFinal(result.orderId(), result.status() == OrderStatus.EXECUTED
+					? TransactionState.EXECUTED : TransactionState.REJECTED);
 			System.out.println("Received " + result.status() + " for order " + result.orderId());
 		} catch (Exception e) {
 			System.out.println("Response error: " + e.getMessage());
@@ -26,8 +43,35 @@ public class BrokerService {
 
 
 	public void sendOrder(BrokerOrder order) {
-		FixMessage message = new FixMessage(
-				BrokerApplication.BROKER_ID,
+		if (connection == null || brokerId == null) {
+			throw new IllegalStateException("Broker is not connected to the Router");
+		}
+		transactions.createOrder(toTransaction(order));
+		connection.send(toFixMessage(order));
+	}
+
+	/** Returns unfinished orders to resend after a Broker restart. */
+	public List<BrokerOrder> pendingOrders() {
+		if (brokerId == null) {
+			throw new IllegalStateException("Broker ID has not been assigned");
+		}
+		transactions.recoverBroker(brokerInstance, brokerId);
+		return transactions.pendingOrders(brokerInstance).stream().map(this::toBrokerOrder).toList();
+	}
+
+	public void resendPendingOrders() {
+		for (BrokerOrder order : pendingOrders()) {
+			connection.send(toFixMessage(order));
+			System.out.println("Restored pending order " + order.orderId());
+		}
+	}
+
+	public FixMessage toFixMessage(BrokerOrder order) {
+		if (brokerId == null) {
+			throw new IllegalStateException("Broker ID has not been assigned");
+		}
+		return new FixMessage(
+				brokerId,
 				order.marketId(),
 				getFIXMessageType(order.side()),
 				Map.of(
@@ -38,7 +82,13 @@ public class BrokerService {
 						FixTag.PRICE, String.valueOf(order.price())
 				)
 		);
-		connection.send(message);
+	}
+
+	public OrderResult toOrderResult(FixMessage message) {
+		if (brokerId == null || !brokerId.equals(message.targetId())) {
+			throw new IllegalArgumentException("Response is not addressed to this Broker");
+		}
+		return new OrderResult(message.getField(FixTag.ORDER_ID), getMessageOrderStatus(message.type()));
 	}
 
 	public FixMessageType getFIXMessageType(OrderSide side) {
@@ -53,6 +103,20 @@ public class BrokerService {
 
 	public void setConnection(BrokerConnection connection) {
 		this.connection = connection;
+	}
+
+	public void setBrokerId(String brokerId) {
+		this.brokerId = brokerId;
+	}
+
+	private TransactionRecord toTransaction(BrokerOrder order) {
+		return new TransactionRecord(order.orderId(), brokerInstance, brokerId, order.marketId(), order.side().name(),
+				order.instrument(), order.quantity(), order.price(), TransactionState.PENDING);
+	}
+
+	private BrokerOrder toBrokerOrder(TransactionRecord record) {
+		return new BrokerOrder(record.orderId(), record.marketId(), OrderSide.valueOf(record.side()),
+				record.instrument(), record.quantity(), record.price());
 	}
 
 }

@@ -7,14 +7,13 @@ import java.util.Objects;
 public record BrokerOrder(
 		String orderId,
 		String marketId,
-		String market,
 		OrderSide side,
 		String instrument,
 		long quantity,
 		BigDecimal price
 ) {
-	public BrokerOrder(String marketId, String market, OrderSide side, String instrument, long quantity, BigDecimal price) {
-		this(java.util.UUID.randomUUID().toString(), marketId, market, side, instrument, quantity, price);
+	public BrokerOrder(String marketId, OrderSide side, String instrument, long quantity, BigDecimal price) {
+		this(java.util.UUID.randomUUID().toString(), marketId, side, instrument, quantity, price);
 	}
 
 	public BrokerOrder {
@@ -23,9 +22,6 @@ public record BrokerOrder(
 		}
 		if (marketId == null || !marketId.matches("\\d{6}")) {
 			throw new IllegalArgumentException("Market ID must contain six digits");
-		}
-		if (market == null || market.isBlank()) {
-			throw new IllegalArgumentException("Market is required");
 		}
 		side = Objects.requireNonNull(side, "Order side is required");
 		if (instrument == null || instrument.isBlank()) {

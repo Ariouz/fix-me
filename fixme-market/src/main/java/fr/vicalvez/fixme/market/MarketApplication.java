@@ -18,7 +18,6 @@ public class MarketApplication {
 				Throwable::printStackTrace
 		)) {
 			marketService.setConnection(connection);
-			marketService.initInstruments();
 			connection.connect();
 			connection.run();
 		} catch (IOException exception) {
@@ -28,6 +27,7 @@ public class MarketApplication {
 
 	private static void setMarketId(String id) {
 		MARKET_ID = id;
+		marketService.initInstruments();
 		System.out.println("Assigned Market Id: " + MARKET_ID);
 	}
 
