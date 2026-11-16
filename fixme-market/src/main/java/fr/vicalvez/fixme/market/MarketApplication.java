@@ -15,7 +15,7 @@ public class MarketApplication {
 				"localhost",
 				MarketApplication::setMarketId,
 				marketService::handleMessage,
-				Throwable::printStackTrace
+				MarketApplication::onConnectionError
 		)) {
 			marketService.setConnection(connection);
 			connection.connect();
@@ -23,6 +23,10 @@ public class MarketApplication {
 		} catch (IOException exception) {
 			throw new IllegalStateException("Market error: ", exception);
 		}
+	}
+
+	private static void onConnectionError(Exception exception) {
+		System.out.println("[MARKET] Router unavailable on localhost:5001. Start the Router before the Market.");
 	}
 
 	private static void setMarketId(String id) {

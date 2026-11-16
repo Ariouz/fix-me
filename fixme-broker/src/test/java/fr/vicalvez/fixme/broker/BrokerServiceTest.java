@@ -6,21 +6,27 @@ import fr.vicalvez.fixme.broker.model.OrderStatus;
 import fr.vicalvez.fixme.protocol.FixMessage;
 import fr.vicalvez.fixme.protocol.FixMessageType;
 import fr.vicalvez.fixme.protocol.FixTag;
+import fr.vicalvez.fixme.persistence.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class BrokerServiceTest {
 
+	@TempDir
+	Path temporaryDirectory;
+
 	private BrokerService service;
 
 	@BeforeEach
 	void setUp() {
-		service = new BrokerService();
+		service = new BrokerService(new TransactionRepository(temporaryDirectory.resolve("broker.db")));
 		service.setBrokerId("123456");
 	}
 

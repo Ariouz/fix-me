@@ -45,6 +45,7 @@ final class RouterServer implements AutoCloseable {
 	void run() throws IOException {
 		bind(BROKER_PORT, ConnectionType.BROKER);
 		bind(MARKET_PORT, ConnectionType.MARKET);
+		System.out.println("[ROUTER] listening on ports " + BROKER_PORT + " (BROKER) and " + MARKET_PORT + " (MARKET)");
 		while (running) {
 			applyPendingChanges();
 			selector.select();

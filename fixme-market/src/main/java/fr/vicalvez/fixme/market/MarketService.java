@@ -106,6 +106,9 @@ public class MarketService {
 		if (status == ExecutionStatus.EXECUTED) {
 			return "order executed";
 		}
+		if (transactions.find(order.orderId()).isEmpty()) {
+			return "transaction not found in the shared database";
+		}
 		Long available = transactions.availableQuantity(order.marketId(), order.instrument()).orElse(null);
 		if (available == null) {
 			return "instrument is not traded";

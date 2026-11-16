@@ -1,6 +1,8 @@
 package fr.vicalvez.fixme.persistence;
 
 import java.math.BigDecimal;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -15,21 +17,45 @@ import java.util.Optional;
 /**
  * SQLite journal shared by Broker and Market.
  *
- * <p>The database path is configured with {@code -Dfixme.database.path=...};
- * both applications must use the same path for local fail-over recovery.</p>
+ * <p>By default the database is {@code fixme.db} beside the parent project POM.
+ * Its path may be overridden with {@code -Dfixme.database.path=...}.</p>
  */
 public final class TransactionRepository {
 
-	private static final String DEFAULT_DATABASE = "fixme.db";
 	private final String url;
 
 	public TransactionRepository() {
-		this(Path.of(System.getProperty("fixme.database.path", DEFAULT_DATABASE)));
+		this(defaultDatabasePath());
 	}
 
 	public TransactionRepository(Path databasePath) {
-		this.url = "jdbc:sqlite:" + databasePath.toAbsolutePath();
+		Path absolutePath = databasePath.toAbsolutePath();
+		try {
+			Path parent = absolutePath.getParent();
+			if (parent != null) {
+				Files.createDirectories(parent);
+			}
+		} catch (IOException exception) {
+			throw new IllegalStateException("Unable to create the SQLite database directory", exception);
+		}
+		this.url = "jdbc:sqlite:" + absolutePath;
 		initialize();
+	}
+
+	private static Path defaultDatabasePath() {
+		String configuredPath = System.getProperty("fixme.database.path");
+		if (configuredPath != null && !configuredPath.isBlank()) {
+			return Path.of(configuredPath);
+		}
+		Path directory = Path.of(System.getProperty("user.dir")).toAbsolutePath();
+		while (directory != null) {
+			if (Files.isRegularFile(directory.resolve("pom.xml"))
+					&& Files.isDirectory(directory.resolve("fixme-common"))) {
+				return directory.resolve("fixme.db");
+			}
+			directory = directory.getParent();
+		}
+		return Path.of(System.getProperty("user.dir"), "fixme.db");
 	}
 
 	public void createOrder(TransactionRecord transaction) {

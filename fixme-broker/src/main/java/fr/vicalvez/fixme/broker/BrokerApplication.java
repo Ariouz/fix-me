@@ -21,7 +21,7 @@ public class BrokerApplication {
 				"localhost",
 				BrokerApplication::onAssignedId,
 				brokerService::handleMessage,
-				Throwable::printStackTrace
+				BrokerApplication::onConnectionError
 		)) {
 			connectionHolder[0] = connection;
 			brokerService.setConnection(connection);
@@ -30,6 +30,10 @@ public class BrokerApplication {
 		} catch (IOException exception) {
 			throw new IllegalStateException("Market error: ", exception);
 		}
+	}
+
+	private static void onConnectionError(Exception exception) {
+		System.out.println("[BROKER] Router unavailable on localhost:5000. Start the Router before the Broker.");
 	}
 
 	private static final BrokerConnection[] connectionHolder = new BrokerConnection[1];

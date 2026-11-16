@@ -6,20 +6,26 @@ import fr.vicalvez.fixme.market.model.TradeOrder;
 import fr.vicalvez.fixme.protocol.FixMessage;
 import fr.vicalvez.fixme.protocol.FixMessageType;
 import fr.vicalvez.fixme.protocol.FixTag;
+import fr.vicalvez.fixme.persistence.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class MarketServiceTest {
 
+	@TempDir
+	Path temporaryDirectory;
+
 	private MarketService service;
 
 	@BeforeEach
 	void setUp() {
-		service = new MarketService();
+		service = new MarketService(new TransactionRepository(temporaryDirectory.resolve("market.db")));
 		service.initInstruments();
 	}
 
