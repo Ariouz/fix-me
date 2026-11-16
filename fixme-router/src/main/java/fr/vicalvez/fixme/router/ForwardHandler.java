@@ -14,5 +14,7 @@ final class ForwardHandler extends RouterHandler {
 	protected void process(RouterMessageContext context) {
 		context.destination().enqueue(context.rawMessage());
 		writeNotifier.accept(context.destination());
+		System.out.println("[ROUTER] " + context.source().type() + " " + context.source().id()
+				+ " -> " + context.destination().type() + " " + context.destination().id());
 	}
 }

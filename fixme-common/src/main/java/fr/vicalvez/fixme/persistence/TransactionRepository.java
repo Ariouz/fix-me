@@ -73,6 +73,14 @@ public final class TransactionRepository {
 		}
 	}
 
+	public Optional<Long> availableQuantity(String marketId, String symbol) {
+		try (Connection connection = open()) {
+			return Optional.ofNullable(lookupInventoryQuantity(connection, marketId, symbol));
+		} catch (SQLException exception) {
+			throw failure(exception);
+		}
+	}
+
 	public void ensureInstrument(String marketId, String symbol, long quantity, BigDecimal price) {
 		String sql = "INSERT OR IGNORE INTO inventory(market_id, symbol, quantity, price) VALUES (?, ?, ?, ?)";
 		try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -154,7 +162,7 @@ public final class TransactionRepository {
 	}
 
 	private TransactionState execute(Connection connection, TransactionRecord transaction) throws SQLException {
-		Long quantity = inventoryQuantity(connection, transaction.marketId(), transaction.instrument());
+		Long quantity = lookupInventoryQuantity(connection, transaction.marketId(), transaction.instrument());
 		if (quantity == null || transaction.quantity() <= 0) {
 			return TransactionState.REJECTED;
 		}
@@ -182,7 +190,7 @@ public final class TransactionRepository {
 		}
 	}
 
-	private Long inventoryQuantity(Connection connection, String marketId, String symbol) throws SQLException {
+	private Long lookupInventoryQuantity(Connection connection, String marketId, String symbol) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("SELECT quantity FROM inventory WHERE market_id = ? AND symbol = ?")) {
 			statement.setString(1, marketId);
 			statement.setString(2, symbol);

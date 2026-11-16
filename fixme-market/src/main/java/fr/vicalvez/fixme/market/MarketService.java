@@ -50,11 +50,11 @@ public class MarketService {
 		try {
 			TradeOrder order = asTradeOrder(message);
 			TransactionState state = transactions.processOrder(order.orderId(), order.brokerId(), order.marketId());
-			sendStatus(message.senderId(), order.orderId(), state == TransactionState.EXECUTED
-					? ExecutionStatus.EXECUTED : ExecutionStatus.REJECTED);
+			ExecutionStatus status = state == TransactionState.EXECUTED
+					? ExecutionStatus.EXECUTED : ExecutionStatus.REJECTED;
+			sendStatus(message.senderId(), order.orderId(), status, responseReason(order, status));
 		} catch (Exception ignored) {
-			sendStatus(message.senderId(), message.getField(FixTag.ORDER_ID), ExecutionStatus.REJECTED);
-			System.out.println("Received an invalid TradeOrder");
+			sendStatus(message.senderId(), message.getField(FixTag.ORDER_ID), ExecutionStatus.REJECTED, "invalid order");
 		}
 
 	}
@@ -89,12 +89,31 @@ public class MarketService {
 	}
 
 	public void sendStatus(String targetId, String orderId, ExecutionStatus status) {
+		sendStatus(targetId, orderId, status, status == ExecutionStatus.EXECUTED ? "order executed" : "order rejected");
+	}
+
+	private void sendStatus(String targetId, String orderId, ExecutionStatus status, String reason) {
 		if (connection == null) { throw new NullPointerException("Failed to send status message, connection is null"); }
 		connection.send(toStatusMessage(targetId, orderId, status));
+		System.out.println("[MARKET] " + status + " order " + orderId + ": " + reason);
 	}
 
 	public FixMessage toStatusMessage(String targetId, String orderId, ExecutionStatus status) {
 		return new FixMessage(MarketApplication.MARKET_ID, targetId, getFIXMessageType(status), Map.of(FixTag.ORDER_ID, orderId));
+	}
+
+	private String responseReason(TradeOrder order, ExecutionStatus status) {
+		if (status == ExecutionStatus.EXECUTED) {
+			return "order executed";
+		}
+		Long available = transactions.availableQuantity(order.marketId(), order.instrument()).orElse(null);
+		if (available == null) {
+			return "instrument is not traded";
+		}
+		if (order.side() == OrderSide.BUY && order.quantity() > available) {
+			return "insufficient stock";
+		}
+		return "order rejected";
 	}
 
 	public static TradeOrder asTradeOrder(FixMessage message) throws IllegalArgumentException{

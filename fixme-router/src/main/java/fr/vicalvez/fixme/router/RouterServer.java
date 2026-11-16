@@ -92,6 +92,7 @@ final class RouterServer implements AutoCloseable {
 			ClientConnection connection = register(channel, type);
 			connection.enqueue(ByteBuffer.wrap((connection.id() + "\n").getBytes(StandardCharsets.US_ASCII)));
 			requestWrite(connection);
+			System.out.println("[ROUTER] " + type + " " + connection.id() + " connected");
 		}
 	}
 
@@ -171,7 +172,10 @@ final class RouterServer implements AutoCloseable {
 	}
 
 	private void closeConnection(ClientConnection connection) {
-		routingTable.remove(connection.id(), connection);
+		if (!routingTable.remove(connection.id(), connection)) {
+			return;
+		}
+		System.out.println("[ROUTER] " + connection.type() + " " + connection.id() + " disconnected");
 		SelectionKey key = connection.channel().keyFor(selector);
 		if (key != null) {
 			key.cancel();
@@ -188,7 +192,11 @@ final class RouterServer implements AutoCloseable {
 		running = false;
 		workers.shutdownNow();
 		for (SelectionKey key : Set.copyOf(selector.keys())) {
-			key.channel().close();
+			if (key.attachment() instanceof ClientConnection connection) {
+				closeConnection(connection);
+			} else {
+				key.channel().close();
+			}
 		}
 		selector.close();
 	}
