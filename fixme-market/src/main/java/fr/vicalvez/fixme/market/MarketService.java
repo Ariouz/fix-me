@@ -8,10 +8,12 @@ import fr.vicalvez.fixme.protocol.FixMessageType;
 import fr.vicalvez.fixme.protocol.FixTag;
 import fr.vicalvez.fixme.persistence.TransactionRepository;
 import fr.vicalvez.fixme.persistence.TransactionState;
+import fr.vicalvez.fixme.persistence.InventoryRecord;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 
 public class MarketService {
 
@@ -86,6 +88,13 @@ public class MarketService {
 			throw new IllegalArgumentException("Unknown instrument: " + symbol);
 		}
 		return quantity;
+	}
+
+	public List<InventoryRecord> listStocks() {
+		if (MarketApplication.MARKET_ID == null) {
+			throw new IllegalStateException("Market ID has not been assigned");
+		}
+		return transactions.inventory(MarketApplication.MARKET_ID);
 	}
 
 	public void sendStatus(String targetId, String orderId, ExecutionStatus status) {

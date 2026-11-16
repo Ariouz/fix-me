@@ -25,6 +25,12 @@ class TransactionRepositoryTest {
 		assertEquals(TransactionState.EXECUTED, repository.processOrder("order-1", "123456", "654321"));
 		assertEquals(TransactionState.EXECUTED, repository.processOrder("order-1", "123456", "654321"));
 		assertEquals(TransactionState.EXECUTED, repository.find("order-1").orElseThrow().state());
+		assertEquals(5L, repository.availableQuantity("654321", "AAPL").orElseThrow());
+
+		TransactionRecord tooLarge = order("order-2", 6);
+		repository.createOrder(tooLarge);
+		assertEquals(TransactionState.REJECTED, repository.processOrder("order-2", "123456", "654321"));
+		assertEquals(5L, repository.availableQuantity("654321", "AAPL").orElseThrow());
 	}
 
 	@Test
@@ -38,7 +44,11 @@ class TransactionRepositoryTest {
 	}
 
 	private static TransactionRecord order(String orderId) {
-		return new TransactionRecord(orderId, "broker-a", "123456", "654321", "BUY", "AAPL", 5,
+		return order(orderId, 5);
+	}
+
+	private static TransactionRecord order(String orderId, long quantity) {
+		return new TransactionRecord(orderId, "broker-a", "123456", "654321", "BUY", "AAPL", quantity,
 				new BigDecimal("42.50"), TransactionState.PENDING);
 	}
 }

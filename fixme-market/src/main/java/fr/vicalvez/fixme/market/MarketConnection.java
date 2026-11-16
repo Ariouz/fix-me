@@ -99,7 +99,9 @@ public final class MarketConnection implements AutoCloseable {
 				}
 			}
 		} catch (IOException | RuntimeException exception) {
-			report(exception);
+			if (running) {
+				report(exception);
+			}
 		} finally {
 			closeQuietly();
 		}

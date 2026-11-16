@@ -107,6 +107,23 @@ public final class TransactionRepository {
 		}
 	}
 
+	public List<InventoryRecord> inventory(String marketId) {
+		try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+				"SELECT symbol, quantity, price FROM inventory WHERE market_id = ? ORDER BY symbol")) {
+			statement.setString(1, marketId);
+			try (ResultSet rows = statement.executeQuery()) {
+				List<InventoryRecord> instruments = new ArrayList<>();
+				while (rows.next()) {
+					instruments.add(new InventoryRecord(rows.getString("symbol"), rows.getLong("quantity"),
+							new BigDecimal(rows.getString("price"))));
+				}
+				return instruments;
+			}
+		} catch (SQLException exception) {
+			throw failure(exception);
+		}
+	}
+
 	public void ensureInstrument(String marketId, String symbol, long quantity, BigDecimal price) {
 		String sql = "INSERT OR IGNORE INTO inventory(market_id, symbol, quantity, price) VALUES (?, ?, ?, ?)";
 		try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {

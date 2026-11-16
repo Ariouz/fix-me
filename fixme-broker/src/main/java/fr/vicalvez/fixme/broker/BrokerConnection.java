@@ -88,7 +88,9 @@ public final class BrokerConnection implements AutoCloseable {
 				}
 			}
 		} catch (IOException | RuntimeException exception) {
-			report(exception);
+			if (running) {
+				report(exception);
+			}
 		} finally {
 			closeQuietly();
 		}
