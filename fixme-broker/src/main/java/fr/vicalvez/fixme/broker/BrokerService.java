@@ -60,9 +60,20 @@ public class BrokerService {
 	}
 
 	public void resendPendingOrders() {
+		recoverUndeliveredResponses();
 		for (BrokerOrder order : pendingOrders()) {
 			connection.send(toFixMessage(order));
 			System.out.println("Restored pending order " + order.orderId());
+		}
+	}
+
+	/** Restores Market responses persisted while this Broker was disconnected. */
+	public void recoverUndeliveredResponses() {
+		for (TransactionRecord transaction : transactions.undeliveredFinalOrders(brokerInstance)) {
+			OrderStatus status = transaction.state() == TransactionState.EXECUTED
+					? OrderStatus.EXECUTED : OrderStatus.REJECTED;
+			System.out.println("Recovered " + status + " for order " + transaction.orderId());
+			transactions.markResponseDelivered(transaction.orderId());
 		}
 	}
 

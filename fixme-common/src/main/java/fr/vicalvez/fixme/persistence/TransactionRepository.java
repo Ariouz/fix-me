@@ -89,6 +89,18 @@ public final class TransactionRepository {
 		}
 	}
 
+	/** Returns final Market responses that could not be delivered to a Broker. */
+	public List<TransactionRecord> undeliveredFinalOrders(String brokerInstance) {
+		String sql = "SELECT * FROM transactions WHERE broker_instance = ? "
+				+ "AND state IN ('EXECUTED', 'REJECTED') AND response_delivered = 0 ORDER BY updated_at";
+		try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+			statement.setString(1, brokerInstance);
+			return readAll(statement);
+		} catch (SQLException exception) {
+			throw failure(exception);
+		}
+	}
+
 	public Optional<TransactionRecord> find(String orderId) {
 		try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("SELECT * FROM transactions WHERE order_id = ?")) {
 			statement.setString(1, orderId);
@@ -161,13 +173,17 @@ public final class TransactionRepository {
 			throw new IllegalArgumentException("Only a final state can be stored as a response");
 		}
 		try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
-				"UPDATE transactions SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE order_id = ?")) {
+				"UPDATE transactions SET state = ?, response_delivered = 1, updated_at = CURRENT_TIMESTAMP WHERE order_id = ?")) {
 			statement.setString(1, state.name());
 			statement.setString(2, orderId);
 			statement.executeUpdate();
 		} catch (SQLException exception) {
 			throw failure(exception);
 		}
+	}
+
+	public void markResponseDelivered(String orderId) {
+		update("UPDATE transactions SET response_delivered = 1, updated_at = CURRENT_TIMESTAMP WHERE order_id = ?", orderId);
 	}
 
 	/**
@@ -282,7 +298,15 @@ public final class TransactionRepository {
 			statement.execute("CREATE TABLE IF NOT EXISTS transactions ("
 					+ "order_id TEXT PRIMARY KEY, broker_instance TEXT NOT NULL, broker_id TEXT NOT NULL, market_id TEXT NOT NULL, side TEXT NOT NULL, "
 					+ "instrument TEXT NOT NULL, quantity INTEGER NOT NULL, price TEXT NOT NULL, state TEXT NOT NULL, "
+					+ "response_delivered INTEGER NOT NULL DEFAULT 0, "
 					+ "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+			try {
+				statement.execute("ALTER TABLE transactions ADD COLUMN response_delivered INTEGER NOT NULL DEFAULT 0");
+			} catch (SQLException exception) {
+				if (!exception.getMessage().contains("duplicate column name")) {
+					throw exception;
+				}
+			}
 			statement.execute("CREATE TABLE IF NOT EXISTS inventory ("
 					+ "market_id TEXT NOT NULL, symbol TEXT NOT NULL, quantity INTEGER NOT NULL, price TEXT NOT NULL, "
 					+ "PRIMARY KEY(market_id, symbol))");

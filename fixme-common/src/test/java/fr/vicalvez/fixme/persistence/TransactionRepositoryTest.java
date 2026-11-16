@@ -43,6 +43,18 @@ class TransactionRepositoryTest {
 		assertEquals("654322", repository.pendingOrders("broker-a").get(0).brokerId());
 	}
 
+	@Test
+	void finalResponseRemainsAvailableUntilTheBrokerAcknowledgesIt() {
+		TransactionRepository repository = new TransactionRepository(temporaryDirectory.resolve("failover.db"));
+		repository.ensureInstrument("654321", "AAPL", 10, new BigDecimal("42.50"));
+		repository.createOrder(order("order-3", 1));
+		repository.processOrder("order-3", "123456", "654321");
+
+		assertEquals(1, repository.undeliveredFinalOrders("broker-a").size());
+		repository.markResponseDelivered("order-3");
+		assertEquals(0, repository.undeliveredFinalOrders("broker-a").size());
+	}
+
 	private static TransactionRecord order(String orderId) {
 		return order(orderId, 5);
 	}
