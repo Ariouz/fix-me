@@ -55,6 +55,26 @@ class TransactionRepositoryTest {
 		assertEquals(0, repository.undeliveredFinalOrders("broker-a").size());
 	}
 
+	@Test
+	void brokerPortfolioChangesOnlyOnceAfterAnExecutedOrder() {
+		TransactionRepository repository = new TransactionRepository(temporaryDirectory.resolve("portfolio.db"));
+		repository.ensureInstrument("654321", "AAPL", 10, new BigDecimal("42.50"));
+		repository.createOrder(order("buy-1", 2));
+		repository.processOrder("buy-1", "123456", "654321");
+
+		assertEquals(true, repository.applyBrokerResponse("buy-1", TransactionState.EXECUTED));
+		assertEquals(2L, repository.brokerInventory("broker-a").get("AAPL"));
+		assertEquals(false, repository.applyBrokerResponse("buy-1", TransactionState.EXECUTED));
+		assertEquals(2L, repository.brokerInventory("broker-a").get("AAPL"));
+
+		TransactionRecord sell = new TransactionRecord("sell-1", "broker-a", "123456", "654321", "SELL", "AAPL", 2,
+				new BigDecimal("42.50"), TransactionState.PENDING);
+		repository.createOrder(sell);
+		repository.processOrder("sell-1", "123456", "654321");
+		repository.applyBrokerResponse("sell-1", TransactionState.EXECUTED);
+		assertEquals(0L, repository.brokerInventory("broker-a").get("AAPL"));
+	}
+
 	private static TransactionRecord order(String orderId) {
 		return order(orderId, 5);
 	}

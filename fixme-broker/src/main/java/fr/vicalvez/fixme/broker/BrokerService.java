@@ -14,6 +14,7 @@ import fr.vicalvez.fixme.persistence.TransactionState;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class BrokerService {
 
@@ -21,6 +22,7 @@ public class BrokerService {
 	private String brokerId;
 	private final String brokerInstance = System.getProperty("fixme.broker.instance", "default-broker");
 	private final TransactionRepository transactions;
+	private final Map<String, Long> stocks = new ConcurrentHashMap<>();
 
 	public BrokerService() {
 		this(new TransactionRepository());
@@ -33,8 +35,7 @@ public class BrokerService {
 	public void handleMessage(FixMessage message) {
 		try {
 			OrderResult result = toOrderResult(message);
-			transactions.markFinal(result.orderId(), result.status() == OrderStatus.EXECUTED
-					? TransactionState.EXECUTED : TransactionState.REJECTED);
+			applyResponse(result);
 			System.out.println("Received " + result.status() + " for order " + result.orderId());
 		} catch (Exception e) {
 			System.out.println("Response error: " + e.getMessage());
@@ -45,6 +46,9 @@ public class BrokerService {
 	public void sendOrder(BrokerOrder order) {
 		if (connection == null || brokerId == null) {
 			throw new IllegalStateException("Broker is not connected to the Router");
+		}
+		if (order.side() == OrderSide.SELL && stock(order.instrument()) < order.quantity()) {
+			throw new IllegalArgumentException("Insufficient Broker stock for " + order.instrument());
 		}
 		transactions.createOrder(toTransaction(order));
 		connection.send(toFixMessage(order));
@@ -73,7 +77,7 @@ public class BrokerService {
 			OrderStatus status = transaction.state() == TransactionState.EXECUTED
 					? OrderStatus.EXECUTED : OrderStatus.REJECTED;
 			System.out.println("Recovered " + status + " for order " + transaction.orderId());
-			transactions.markResponseDelivered(transaction.orderId());
+			applyResponse(new OrderResult(transaction.orderId(), status));
 		}
 	}
 
@@ -118,6 +122,12 @@ public class BrokerService {
 
 	public void setBrokerId(String brokerId) {
 		this.brokerId = brokerId;
+		stocks.clear();
+		stocks.putAll(transactions.brokerInventory(brokerInstance));
+	}
+
+	public long stock(String instrument) {
+		return stocks.getOrDefault(instrument, 0L);
 	}
 
 	private TransactionRecord toTransaction(BrokerOrder order) {
@@ -128,6 +138,17 @@ public class BrokerService {
 	private BrokerOrder toBrokerOrder(TransactionRecord record) {
 		return new BrokerOrder(record.orderId(), record.marketId(), OrderSide.valueOf(record.side()),
 				record.instrument(), record.quantity(), record.price());
+	}
+
+	private void applyResponse(OrderResult result) {
+		TransactionState state = result.status() == OrderStatus.EXECUTED
+				? TransactionState.EXECUTED : TransactionState.REJECTED;
+		TransactionRecord transaction = transactions.find(result.orderId()).orElse(null);
+		if (transaction != null && transactions.applyBrokerResponse(result.orderId(), state)
+				&& state == TransactionState.EXECUTED) {
+			long delta = "BUY".equals(transaction.side()) ? transaction.quantity() : -transaction.quantity();
+			stocks.merge(transaction.instrument(), delta, Long::sum);
+		}
 	}
 
 }

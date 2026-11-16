@@ -11,7 +11,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -186,11 +188,69 @@ public final class TransactionRepository {
 		update("UPDATE transactions SET response_delivered = 1, updated_at = CURRENT_TIMESTAMP WHERE order_id = ?", orderId);
 	}
 
+	/** Applies a final Market response to the Broker portfolio exactly once. */
+	public boolean applyBrokerResponse(String orderId, TransactionState state) {
+		if (!state.isFinal()) {
+			throw new IllegalArgumentException("Broker response must be final");
+		}
+		try (Connection connection = open()) {
+			begin(connection);
+			try {
+				TransactionRecord transaction = selectByOrderId(connection, orderId);
+				if (transaction == null) {
+					commit(connection);
+					return false;
+				}
+				boolean positionApplied = brokerPositionApplied(connection, orderId);
+				boolean changed = false;
+				if (state == TransactionState.EXECUTED && !positionApplied) {
+					long delta = "BUY".equals(transaction.side()) ? transaction.quantity() : -transaction.quantity();
+					changeBrokerPosition(connection, transaction.brokerInstance(), transaction.instrument(), delta);
+					changed = true;
+				}
+				try (PreparedStatement statement = connection.prepareStatement(
+						"UPDATE transactions SET state = ?, response_delivered = 1, broker_position_applied = 1, "
+								+ "updated_at = CURRENT_TIMESTAMP WHERE order_id = ?")) {
+					statement.setString(1, state.name());
+					statement.setString(2, orderId);
+					statement.executeUpdate();
+				}
+				commit(connection);
+				return changed;
+			} catch (SQLException | RuntimeException exception) {
+				rollback(connection);
+				throw exception;
+			}
+		} catch (SQLException exception) {
+			throw failure(exception);
+		}
+	}
+
+	public Map<String, Long> brokerInventory(String brokerInstance) {
+		try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+				"SELECT symbol, quantity FROM broker_inventory WHERE broker_instance = ? ORDER BY symbol")) {
+			statement.setString(1, brokerInstance);
+			try (ResultSet rows = statement.executeQuery()) {
+				Map<String, Long> positions = new LinkedHashMap<>();
+				while (rows.next()) {
+					positions.put(rows.getString("symbol"), rows.getLong("quantity"));
+				}
+				return positions;
+			}
+		} catch (SQLException exception) {
+			throw failure(exception);
+		}
+	}
+
 	/**
 	 * Idempotently executes an order. Inventory mutation and final transaction
 	 * state are committed atomically, so a crash cannot apply one without the other.
 	 */
 	public TransactionState processOrder(String orderId, String brokerId, String marketId) {
+		return processOrder(orderId, brokerId, marketId, marketId);
+	}
+
+	public TransactionState processOrder(String orderId, String brokerId, String marketId, String inventoryMarketId) {
 		try (Connection connection = open()) {
 			try (Statement begin = connection.createStatement()) {
 				begin.execute("BEGIN IMMEDIATE");
@@ -207,7 +267,7 @@ public final class TransactionRepository {
 				}
 
 				setState(connection, orderId, TransactionState.PROCESSING);
-				TransactionState result = execute(connection, transaction);
+				TransactionState result = execute(connection, transaction, inventoryMarketId);
 				setState(connection, orderId, result);
 				commit(connection);
 				return result;
@@ -220,8 +280,8 @@ public final class TransactionRepository {
 		}
 	}
 
-	private TransactionState execute(Connection connection, TransactionRecord transaction) throws SQLException {
-		Long quantity = lookupInventoryQuantity(connection, transaction.marketId(), transaction.instrument());
+	private TransactionState execute(Connection connection, TransactionRecord transaction, String inventoryMarketId) throws SQLException {
+		Long quantity = lookupInventoryQuantity(connection, inventoryMarketId, transaction.instrument());
 		if (quantity == null || transaction.quantity() <= 0) {
 			return TransactionState.REJECTED;
 		}
@@ -229,11 +289,11 @@ public final class TransactionRepository {
 			if (transaction.quantity() > quantity) {
 				return TransactionState.REJECTED;
 			}
-			changeInventory(connection, transaction, quantity - transaction.quantity());
+			changeInventory(connection, inventoryMarketId, transaction, quantity - transaction.quantity());
 			return TransactionState.EXECUTED;
 		}
 		if ("SELL".equals(transaction.side())) {
-			changeInventory(connection, transaction, Math.addExact(quantity, transaction.quantity()));
+			changeInventory(connection, inventoryMarketId, transaction, Math.addExact(quantity, transaction.quantity()));
 			return TransactionState.EXECUTED;
 		}
 		return TransactionState.REJECTED;
@@ -249,6 +309,34 @@ public final class TransactionRepository {
 		}
 	}
 
+	private TransactionRecord selectByOrderId(Connection connection, String orderId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM transactions WHERE order_id = ?")) {
+			statement.setString(1, orderId);
+			return readAll(statement).stream().findFirst().orElse(null);
+		}
+	}
+
+	private boolean brokerPositionApplied(Connection connection, String orderId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT broker_position_applied FROM transactions WHERE order_id = ?")) {
+			statement.setString(1, orderId);
+			try (ResultSet rows = statement.executeQuery()) {
+				return rows.next() && rows.getInt(1) != 0;
+			}
+		}
+	}
+
+	private void changeBrokerPosition(Connection connection, String brokerInstance, String symbol, long delta) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement(
+				"INSERT INTO broker_inventory(broker_instance, symbol, quantity) VALUES (?, ?, ?) "
+						+ "ON CONFLICT(broker_instance, symbol) DO UPDATE SET quantity = quantity + excluded.quantity")) {
+			statement.setString(1, brokerInstance);
+			statement.setString(2, symbol);
+			statement.setLong(3, delta);
+			statement.executeUpdate();
+		}
+	}
+
 	private Long lookupInventoryQuantity(Connection connection, String marketId, String symbol) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("SELECT quantity FROM inventory WHERE market_id = ? AND symbol = ?")) {
 			statement.setString(1, marketId);
@@ -259,10 +347,10 @@ public final class TransactionRepository {
 		}
 	}
 
-	private void changeInventory(Connection connection, TransactionRecord transaction, long quantity) throws SQLException {
+	private void changeInventory(Connection connection, String inventoryMarketId, TransactionRecord transaction, long quantity) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("UPDATE inventory SET quantity = ? WHERE market_id = ? AND symbol = ?")) {
 			statement.setLong(1, quantity);
-			statement.setString(2, transaction.marketId());
+			statement.setString(2, inventoryMarketId);
 			statement.setString(3, transaction.instrument());
 			statement.executeUpdate();
 		}
@@ -280,6 +368,12 @@ public final class TransactionRepository {
 	private void commit(Connection connection) throws SQLException {
 		try (Statement statement = connection.createStatement()) {
 			statement.execute("COMMIT");
+		}
+	}
+
+	private void begin(Connection connection) throws SQLException {
+		try (Statement statement = connection.createStatement()) {
+			statement.execute("BEGIN IMMEDIATE");
 		}
 	}
 
@@ -307,9 +401,19 @@ public final class TransactionRepository {
 					throw exception;
 				}
 			}
+			try {
+				statement.execute("ALTER TABLE transactions ADD COLUMN broker_position_applied INTEGER NOT NULL DEFAULT 0");
+			} catch (SQLException exception) {
+				if (!exception.getMessage().contains("duplicate column name")) {
+					throw exception;
+				}
+			}
 			statement.execute("CREATE TABLE IF NOT EXISTS inventory ("
 					+ "market_id TEXT NOT NULL, symbol TEXT NOT NULL, quantity INTEGER NOT NULL, price TEXT NOT NULL, "
 					+ "PRIMARY KEY(market_id, symbol))");
+			statement.execute("CREATE TABLE IF NOT EXISTS broker_inventory ("
+					+ "broker_instance TEXT NOT NULL, symbol TEXT NOT NULL, quantity INTEGER NOT NULL, "
+					+ "PRIMARY KEY(broker_instance, symbol))");
 		} catch (SQLException exception) {
 			throw failure(exception);
 		}

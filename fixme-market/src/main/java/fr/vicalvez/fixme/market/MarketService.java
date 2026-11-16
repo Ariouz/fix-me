@@ -19,6 +19,7 @@ public class MarketService {
 
 	private final HashMap<String, Long> instruments = new HashMap<>();
 	private final TransactionRepository transactions;
+	private final String marketInstance = System.getProperty("fixme.market.instance", "default-market");
 	private MarketConnection connection;
 
 	public MarketService() {
@@ -37,7 +38,7 @@ public class MarketService {
 		this.instruments.put("MSFT", 25L);
 		if (MarketApplication.MARKET_ID != null) {
 			instruments.forEach((symbol, quantity) -> transactions.ensureInstrument(
-					MarketApplication.MARKET_ID, symbol, quantity, new BigDecimal("1.00")
+					marketInstance, symbol, quantity, new BigDecimal("1.00")
 			));
 			transactions.recoverMarket(MarketApplication.MARKET_ID);
 		}
@@ -51,7 +52,9 @@ public class MarketService {
 
 		try {
 			TradeOrder order = asTradeOrder(message);
-			TransactionState state = transactions.processOrder(order.orderId(), order.brokerId(), order.marketId());
+			TransactionState state = transactions.processOrder(
+					order.orderId(), order.brokerId(), order.marketId(), marketInstance
+			);
 			ExecutionStatus status = state == TransactionState.EXECUTED
 					? ExecutionStatus.EXECUTED : ExecutionStatus.REJECTED;
 			sendStatus(message.senderId(), order.orderId(), status, responseReason(order, status));
@@ -94,7 +97,7 @@ public class MarketService {
 		if (MarketApplication.MARKET_ID == null) {
 			throw new IllegalStateException("Market ID has not been assigned");
 		}
-		return transactions.inventory(MarketApplication.MARKET_ID);
+		return transactions.inventory(marketInstance);
 	}
 
 	public void sendStatus(String targetId, String orderId, ExecutionStatus status) {
@@ -118,7 +121,7 @@ public class MarketService {
 		if (transactions.find(order.orderId()).isEmpty()) {
 			return "transaction not found in the shared database";
 		}
-		Long available = transactions.availableQuantity(order.marketId(), order.instrument()).orElse(null);
+		Long available = transactions.availableQuantity(marketInstance, order.instrument()).orElse(null);
 		if (available == null) {
 			return "instrument is not traded";
 		}
