@@ -179,12 +179,6 @@ final class RouterServer implements AutoCloseable {
 		return new String(bytes, StandardCharsets.US_ASCII).replace((char) FixCodec.SOH, '|');
 	}
 
-	private static String display(ByteBuffer rawMessage) {
-		byte[] bytes = new byte[rawMessage.remaining()];
-		rawMessage.duplicate().get(bytes);
-		return new String(bytes, StandardCharsets.US_ASCII).replace((char) FixCodec.SOH, '|');
-	}
-
 	private void write(ClientConnection connection) throws IOException {
 		if (connection.flush()) {
 			SelectionKey key = connection.channel().keyFor(selector);
