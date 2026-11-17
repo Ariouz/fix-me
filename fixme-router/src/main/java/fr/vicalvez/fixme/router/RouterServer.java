@@ -166,8 +166,17 @@ final class RouterServer implements AutoCloseable {
 				FixMessageType.REJECTED,
 				Map.of(FixTag.ORDER_ID, request.getField(FixTag.ORDER_ID))
 		);
-		source.enqueue(codec.encode(rejection));
+		ByteBuffer rawRejection = codec.encode(rejection);
+		source.enqueue(rawRejection);
 		requestWrite(source);
+		System.out.println("[ROUTER] ROUTER " + ROUTER_ID + " -> " + source.type() + " " + source.id()
+				+ " | " + display(rawRejection));
+	}
+
+	private static String display(ByteBuffer rawMessage) {
+		byte[] bytes = new byte[rawMessage.remaining()];
+		rawMessage.duplicate().get(bytes);
+		return new String(bytes, StandardCharsets.US_ASCII).replace((char) FixCodec.SOH, '|');
 	}
 
 	private static String display(ByteBuffer rawMessage) {
