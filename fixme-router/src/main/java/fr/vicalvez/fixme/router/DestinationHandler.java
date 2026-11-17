@@ -14,7 +14,7 @@ final class DestinationHandler extends RouterHandler {
 	protected void process(RouterMessageContext context) {
 		ClientConnection destination = connectionLookup.apply(context.message().targetId());
 		if (destination == null) {
-			throw new IllegalArgumentException("Unknown message destination");
+			throw new UnknownDestinationException(context.message());
 		}
 		context.destination(destination);
 	}

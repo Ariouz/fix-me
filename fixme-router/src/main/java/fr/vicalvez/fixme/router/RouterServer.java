@@ -1,5 +1,9 @@
 package fr.vicalvez.fixme.router;
 
+import fr.vicalvez.fixme.protocol.FixCodec;
+import fr.vicalvez.fixme.protocol.FixMessage;
+import fr.vicalvez.fixme.protocol.FixMessageType;
+import fr.vicalvez.fixme.protocol.FixTag;
 import fr.vicalvez.fixme.protocol.FixMessageFramer;
 
 import java.io.IOException;
@@ -24,6 +28,9 @@ final class RouterServer implements AutoCloseable {
 
 	static final int BROKER_PORT = 5000;
 	static final int MARKET_PORT = 5001;
+	private static final String ROUTER_ID = "000000";
+	private final int brokerPort;
+	private final int marketPort;
 
 	private final Selector selector = Selector.open();
 	private final ExecutorService workers = Executors.newFixedThreadPool(
@@ -33,19 +40,26 @@ final class RouterServer implements AutoCloseable {
 	private final ConcurrentLinkedQueue<ClientConnection> pendingWrites = new ConcurrentLinkedQueue<>();
 	private final ConcurrentLinkedQueue<ClientConnection> pendingClosures = new ConcurrentLinkedQueue<>();
 	private final RouterHandler processingChain;
+	private final FixCodec codec = new FixCodec();
 
 	private volatile boolean running = true;
 
 	RouterServer() throws IOException {
+		this(BROKER_PORT, MARKET_PORT);
+	}
+
+	RouterServer(int brokerPort, int marketPort) throws IOException {
+		this.brokerPort = brokerPort;
+		this.marketPort = marketPort;
 		processingChain = new ValidationHandler();
 		processingChain.then(new DestinationHandler(routingTable::get))
 				.then(new ForwardHandler(this::requestWrite));
 	}
 
 	void run() throws IOException {
-		bind(BROKER_PORT, ConnectionType.BROKER);
-		bind(MARKET_PORT, ConnectionType.MARKET);
-		System.out.println("[ROUTER] listening on ports " + BROKER_PORT + " (BROKER) and " + MARKET_PORT + " (MARKET)");
+		bind(brokerPort, ConnectionType.BROKER);
+		bind(marketPort, ConnectionType.MARKET);
+		System.out.println("[ROUTER] listening on ports " + brokerPort + " (BROKER) and " + marketPort + " (MARKET)");
 		while (running) {
 			applyPendingChanges();
 			selector.select();
@@ -100,7 +114,7 @@ final class RouterServer implements AutoCloseable {
 	private ClientConnection register(SocketChannel channel, ConnectionType type) throws IOException {
 		String id;
 		do {
-			id = String.format("%06d", ThreadLocalRandom.current().nextInt(1_000_000));
+			id = String.format("%06d", ThreadLocalRandom.current().nextInt(1, 1_000_000));
 		} while (routingTable.containsKey(id));
 
 		ClientConnection connection = new ClientConnection(channel, id, type, workers);
@@ -135,9 +149,22 @@ final class RouterServer implements AutoCloseable {
 	private void process(ClientConnection source, ByteBuffer rawMessage) {
 		try {
 			processingChain.handle(new RouterMessageContext(source, rawMessage));
+		} catch (UnknownDestinationException exception) {
+			rejectUnknownDestination(source, exception.message());
 		} catch (RuntimeException exception) {
 			requestClose(source);
 		}
+	}
+
+	private void rejectUnknownDestination(ClientConnection source, FixMessage request) {
+		FixMessage rejection = new FixMessage(
+				ROUTER_ID,
+				source.id(),
+				FixMessageType.REJECTED,
+				Map.of(FixTag.ORDER_ID, request.getField(FixTag.ORDER_ID))
+		);
+		source.enqueue(codec.encode(rejection));
+		requestWrite(source);
 	}
 
 	private void write(ClientConnection connection) throws IOException {

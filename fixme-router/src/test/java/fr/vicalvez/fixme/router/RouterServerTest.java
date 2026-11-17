@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -22,7 +23,9 @@ class RouterServerTest {
 
 	@Test
 	void forwardsOrderAndExecutionReportBetweenBrokerAndMarket() throws Exception {
-		RouterServer router = new RouterServer();
+		int brokerPort = availablePort();
+		int marketPort = availablePort();
+		RouterServer router = new RouterServer(brokerPort, marketPort);
 		Thread eventLoop = new Thread(() -> {
 			try {
 				router.run();
@@ -32,7 +35,7 @@ class RouterServerTest {
 		}, "router-integration-test");
 		eventLoop.start();
 
-		try (Socket market = socket(RouterServer.MARKET_PORT); Socket broker = socket(RouterServer.BROKER_PORT)) {
+		try (Socket market = socket(marketPort); Socket broker = socket(brokerPort)) {
 			String marketId = greeting(market);
 			String brokerId = greeting(broker);
 			FixCodec codec = new FixCodec();
@@ -40,6 +43,15 @@ class RouterServerTest {
 					FixTag.ORDER_ID, "order-1", FixTag.SYMBOL, "AAPL", FixTag.ORDER_QTY, "5",
 					FixTag.MARKET, marketId, FixTag.PRICE, "42.50"
 			));
+			FixMessage orderForMissingMarket = new FixMessage(brokerId, "999999", FixMessageType.BUY, Map.of(
+					FixTag.ORDER_ID, "missing-market-order", FixTag.SYMBOL, "AAPL", FixTag.ORDER_QTY, "1",
+					FixTag.MARKET, "999999", FixTag.PRICE, "42.50"
+			));
+
+			send(broker, codec.encode(orderForMissingMarket));
+			FixMessage rejection = new FixMessage("000000", brokerId, FixMessageType.REJECTED,
+					Map.of(FixTag.ORDER_ID, "missing-market-order"));
+			assertEquals(rejection, receive(broker, codec));
 
 			send(broker, codec.encode(order));
 			assertEquals(order, receive(market, codec));
@@ -51,6 +63,12 @@ class RouterServerTest {
 		} finally {
 			router.close();
 			eventLoop.join(2_000);
+		}
+	}
+
+	private static int availablePort() throws IOException {
+		try (ServerSocket socket = new ServerSocket(0)) {
+			return socket.getLocalPort();
 		}
 	}
 
