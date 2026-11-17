@@ -150,6 +150,9 @@ final class RouterServer implements AutoCloseable {
 		try {
 			processingChain.handle(new RouterMessageContext(source, rawMessage));
 		} catch (UnknownDestinationException exception) {
+			System.out.println("[ROUTER] " + source.type() + " " + source.id()
+					+ " -> UNKNOWN " + exception.message().targetId()
+					+ " | " + display(rawMessage));
 			rejectUnknownDestination(source, exception.message());
 		} catch (RuntimeException exception) {
 			requestClose(source);
@@ -165,6 +168,12 @@ final class RouterServer implements AutoCloseable {
 		);
 		source.enqueue(codec.encode(rejection));
 		requestWrite(source);
+	}
+
+	private static String display(ByteBuffer rawMessage) {
+		byte[] bytes = new byte[rawMessage.remaining()];
+		rawMessage.duplicate().get(bytes);
+		return new String(bytes, StandardCharsets.US_ASCII).replace((char) FixCodec.SOH, '|');
 	}
 
 	private void write(ClientConnection connection) throws IOException {
